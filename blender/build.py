@@ -124,6 +124,25 @@ def stance(rig, phase):
         bend(rig, f"thumb_03_{side}", x=22)
 
 
+GRIP_TILT = 14
+PALM_DEPTH = 0.012
+FINGER_DEPTH = 0.009
+CLENCH = {"01": 84, "02": 96, "03": 58}
+THUMB_CLENCH = {"01": (0, 0, 0), "02": (32, 0, 0), "03": (48, 0, 0)}
+
+
+def clench(rig, side):
+    for finger in FINGERS:
+        for joint, angle in CLENCH.items():
+            name = f"{finger}_{joint}_{side}"
+            rig.pose.bones[name].rotation_quaternion = Quaternion()
+            bend(rig, name, x=angle)
+    for joint, (x, y, z) in THUMB_CLENCH.items():
+        name = f"thumb_{joint}_{side}"
+        rig.pose.bones[name].rotation_quaternion = Quaternion()
+        bend(rig, name, x=x, y=y, z=z)
+
+
 def idle(rig, frames=96):
     rig.animation_data_create()
     action = bpy.data.actions.new("idle")
@@ -132,6 +151,20 @@ def idle(rig, frames=96):
         stance(rig, 2 * math.pi * frame / frames)
         for pose in rig.pose.bones:
             pose.keyframe_insert("rotation_quaternion", frame=frame + 1)
+    hands = [rig.pose.bones[name] for side, _ in SIDES for name in HAND(side) if name != f"hand_{side}"]
+    grip = bpy.data.actions.new("grip")
+    rig.animation_data.action = grip
+    for frame in (1, frames + 1):
+        stance(rig, 0.0)
+        for side, _ in SIDES:
+            clench(rig, side)
+        for pose in hands:
+            pose.keyframe_insert("rotation_quaternion", frame=frame)
+    track = rig.animation_data.nla_tracks.new()
+    track.name = "grip"
+    track.strips.new("grip", 1, grip)
+    track.mute = True
+    rig.animation_data.action = action
     bpy.context.scene.frame_start, bpy.context.scene.frame_end = 1, frames + 1
     stance(rig, 0.0)
 
@@ -883,8 +916,22 @@ class Wardrobe:
                                     for a in [i * math.pi / 5 - math.pi * 0.8 for i in range(9)]], 0.005, "head")
         return self.finish(item, parts)
 
-    def grip(self, side, local):
-        return self.rig.data.bones[f"hand_{side}"].matrix_local @ local
+    def fist(self, side, radius):
+        rig = self.rig
+        knuckles = [bone_head(rig, f"{finger}_01_{side}") for finger in FINGERS]
+        tips = [bone_tail(rig, f"{finger}_01_{side}") for finger in FINGERS]
+        root = sum(knuckles, Vector()) / len(knuckles)
+        palm = rig.data.bones[f"middle_01_{side}"].matrix_local.to_3x3().col[2].normalized()
+        forward = sum(tips, Vector()) / len(tips) - root
+        forward = (forward - palm * forward.dot(palm)).normalized()
+        across = forward.cross(palm)
+        if across.dot(knuckles[0] - knuckles[-1]) < 0:
+            across = -across
+        axis = (across + forward * math.tan(math.radians(GRIP_TILT))).normalized()
+        thin = (palm - axis * palm.dot(axis)).normalized()
+        frame = Matrix((thin.cross(axis), thin, axis)).transposed().to_4x4()
+        frame.translation = root + palm * (PALM_DEPTH + radius) - forward * (FINGER_DEPTH + radius)
+        return frame
 
     def short_sword(self, item):
         steel = self.mat(item, "primary", 0.22, 1.0)
@@ -909,7 +956,7 @@ class Wardrobe:
         paint(handle, grip)
         pommel = primitive("uv_sphere", segments=16, ring_count=10, radius=0.03, location=(0, 0, -0.065))
         paint(pommel, gold)
-        return self.weapon(item, [blade, fuller, guard, handle, pommel], "r")
+        return self.weapon(item, [blade, fuller, guard, handle, pommel], "r", grip=0.02, radius=0.017)
 
     def flanged_mace(self, item):
         steel = self.mat(item, "primary", 0.3, 1.0, "metal")
@@ -935,7 +982,7 @@ class Wardrobe:
         paint(wrap, self.mat(item, "#3a2614", 0.7, 0.0, "leather"))
         knob = primitive("uv_sphere", segments=12, ring_count=8, radius=0.026, location=(0, 0, -0.1))
         paint(knob, steel)
-        return self.weapon(item, parts + [cap, wrap, knob], "r")
+        return self.weapon(item, parts + [cap, wrap, knob], "r", grip=0.0, radius=0.021)
 
     def parrying_dagger(self, item):
         steel = self.mat(item, "primary", 0.22, 1.0)
@@ -955,7 +1002,7 @@ class Wardrobe:
         paint(handle, self.mat(item, "#3a2614", 0.7, 0.0, "leather"))
         pommel = primitive("uv_sphere", segments=14, ring_count=8, radius=0.022, location=(0, 0, -0.04))
         paint(pommel, gold)
-        return self.weapon(item, [blade, guard, ring, handle, pommel], "l")
+        return self.weapon(item, [blade, guard, ring, handle, pommel], "l", grip=0.03, radius=0.015)
 
     def wooden_shield(self, item):
         b = self.body
@@ -997,13 +1044,29 @@ class Wardrobe:
         frame = Matrix((x, y, z)).transposed().to_4x4()
         frame.translation = centre + out * 0.07
         place(shield, frame)
+        socket = self.fist("l", 0.016)
+        bar = primitive("cylinder", vertices=16, radius=0.016, depth=0.13)
+        paint(bar, self.mat(item, "#3a2614", 0.7, 0.0, "leather"))
+        place(bar, socket)
+        parts = [shield, bar]
+        inner = frame.translation - out * 0.011
+        turn = out.to_track_quat("Z", "Y").to_matrix().to_4x4()
+        for end in (-0.058, 0.058):
+            start = socket.translation + socket.col[2].xyz * end
+            gap = (inner - start).dot(out)
+            if gap <= 0:
+                raise ValueError(f"{item}: grip lies outside the board")
+            post = primitive("cylinder", vertices=10, radius=0.008, depth=gap)
+            paint(post, iron)
+            place(post, Matrix.Translation(start + out * (gap / 2)) @ turn)
+            parts.append(post)
+        shield = join(parts, f"item_{item}")
         bind(shield, self.rig, lower)
         return self.finish(item, [shield])
 
-    def weapon(self, item, parts, side):
+    def weapon(self, item, parts, side, grip, radius):
         obj = join(parts, f"item_{item}")
-        local = Matrix.Translation((0.0, 0.035, -0.012)) @ Matrix.Rotation(math.radians(-90), 4, "X")
-        place(obj, self.grip(side, local))
+        place(obj, self.fist(side, radius) @ Matrix.Translation((0, 0, -grip)))
         bind(obj, self.rig, f"hand_{side}")
         return self.finish(item, [obj])
 
