@@ -545,6 +545,12 @@ HAND = lambda side: {f"hand_{side}"} | {f"{f}_{j}_{side}" for f in FINGERS + ("t
 LEG = lambda side: {f"thigh_{side}", f"calf_{side}"}
 FOOT = lambda side: {f"foot_{side}", f"ball_{side}"}
 SIDES = (("l", 1), ("r", -1))
+UNDERSHIRT = "#e4dccb"
+SHORTS = "#3f4c63"
+UNDERWEAR_LEG = {"male": 0.4, "female": 0.12}
+SHIELD_CLEARANCE = 0.012
+ARMHOLE_INSET = 0.05
+ARMHOLE_SLANT = 0.45
 
 
 class Wardrobe:
@@ -1034,17 +1040,16 @@ class Wardrobe:
             paint(strap, iron)
             parts.append(strap)
         shield = join(parts, f"item_{item}")
-        lower = "lowerarm_l"
-        centre = b.at(lower, 0.55)
         out = Vector((1, 0.25, 0)).normalized()
-        arm = b.axis(lower)
+        arm = b.axis("lowerarm_l")
         z = out
         y = (arm - z * arm.dot(z)).normalized()
         x = y.cross(z)
         frame = Matrix((x, y, z)).transposed().to_4x4()
-        frame.translation = centre + out * 0.07
-        place(shield, frame)
         socket = self.fist("l", 0.016)
+        reach = max((socket.col[2].xyz * end).dot(out) for end in (-0.058, 0.058))
+        frame.translation = socket.translation + out * (reach + 0.016 + SHIELD_CLEARANCE + 0.011)
+        place(shield, frame)
         bar = primitive("cylinder", vertices=16, radius=0.016, depth=0.13)
         paint(bar, self.mat(item, "#3a2614", 0.7, 0.0, "leather"))
         place(bar, socket)
@@ -1061,7 +1066,7 @@ class Wardrobe:
             place(post, Matrix.Translation(start + out * (gap / 2)) @ turn)
             parts.append(post)
         shield = join(parts, f"item_{item}")
-        bind(shield, self.rig, lower)
+        bind(shield, self.rig, "hand_l")
         return self.finish(item, [shield])
 
     def weapon(self, item, parts, side, grip, radius):
@@ -1069,6 +1074,32 @@ class Wardrobe:
         place(obj, self.fist(side, radius) @ Matrix.Translation((0, 0, -grip)))
         bind(obj, self.rig, f"hand_{side}")
         return self.finish(item, [obj])
+
+    def undershirt(self):
+        b = self.body
+        cuts = self.torso_cuts("upperarm", 0.05, -0.25, self.hip() + 0.03)
+        for side, sign in SIDES:
+            shoulder = b.head(f"upperarm_{side}")
+            cuts.append((shoulder + Vector((-sign * ARMHOLE_INSET, 0, 0.05)), Vector((sign, 0, ARMHOLE_SLANT))))
+        shirt = self.skin_shell("undershirt", TORSO | ARM("l") | ARM("r"), 0.004, cuts=cuts, uv_scale=28)
+        solidify(shirt, 0.002)
+        paint(shirt, material("undershirt.cloth", UNDERSHIRT, 0.95, 0.0, self.maps["cloth"]))
+        return shirt
+
+    def shorts(self, leg_t):
+        b = self.body
+        cuts = [(Vector((0, 0, self.waist() + 0.01)), Vector((0, 0, 1)))]
+        for side, _ in SIDES:
+            cuts.append((b.at(f"thigh_{side}", leg_t), b.axis(f"thigh_{side}")))
+        shorts = self.skin_shell("shorts", {"pelvis", "spine_01"} | LEG("l") | LEG("r"), 0.006, cuts=cuts, uv_scale=28)
+        solidify(shorts, 0.002)
+        paint(shorts, material("shorts.cloth", SHORTS, 0.9, 0.0, self.maps["cloth"]))
+        return shorts
+
+    def underwear(self, body):
+        for obj in (self.undershirt(), self.shorts(UNDERWEAR_LEG[body])):
+            obj.data.name = obj.name
+            smooth(obj, 40)
 
     BUILDERS = {
         "hood": "wool_hood", "helm": "iron_helm", "pads": "leather_pads", "pauldrons": "steel_pauldrons",
@@ -1193,6 +1224,7 @@ if __name__ == "__main__":
     body = Body(rig, parts["body"])
     items = json.load(open(options["items"]))
     wardrobe = Wardrobe(body, items, textures())
+    wardrobe.underwear(options["body"])
     only = options["only"].split(",") if options.get("only") else None
     for item in items:
         if only is None or item["id"] in only:

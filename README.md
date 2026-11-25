@@ -22,8 +22,10 @@ Die gebauten Dateien sind eingecheckt: das Image braucht kein Blender, nur `publ
 |---|---|
 | Objekte heißen `item_<id>` | `wardrobe.ts` blendet sie nach der Ausrüstung ein und aus |
 | Teile `body`, `eyes`, `eyebrows`, `eyelashes`, `hair` | `hair` verschwindet, sobald etwas auf dem Kopf sitzt |
+| Unterwäsche `undershirt`, `shorts` | gehört zum Grundkörper, kein Gegenstand; verschwindet unter Brust- bzw. Beinteil |
 | Materialien `<id>.primary` / `<id>.secondary` | färbt das Dashboard zur Laufzeit aus dem Katalog |
 | Animation `idle` | spielt in Schleife, steht bei reduzierter Bewegung |
+| Animation `grip` | nur Fingerspuren; schließt die Hand, die eine Waffe hält |
 | Meshopt-Kompression | `scene.ts` setzt den `MeshoptDecoder` |
 
 Ein neuer Gegenstand im Katalog braucht hier eine Bauanleitung in `Wardrobe.BUILDERS` und einen
